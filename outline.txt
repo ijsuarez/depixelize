@@ -1,0 +1,45 @@
+Depixelizing Pixel Art (http://johanneskopf.de/publications/pixelart/paper/pixel.pdf)
+
+General outline:
+
+Preprocessing:
+  Read in input image
+  Process image to YUV pixel format (maybe a 2d array of pixels?)
+  
+Reshaping Pixel Cells:
+  Create graph of pixels with edges to all eight neighbors (adjacent/diagonal)
+  Remove edges that connect pixels of dissimilar colors (maybe combine this and above step?)
+  Eliminate all crossing edges
+    If 2x2 block is connected, remove diagonals trivially
+    If 2x2 block is only diagonals, compute weights and remove lower weights
+      Compute weights using heuristics for curves, sparsity, and islands
+  Generate simplified Voronoi diagram
+
+Extracting Spline Curves:
+  Identify visible edges
+    Visible edges with only valence-2 nodes are quadratic B-spline curves
+    Control points are initialized to node locations
+  When three splines connect at the same node, create T-junction
+    Categorize edge as shading or contour edge, connect contour edges
+    Otherwise measure angles and connect edges that are close to 180 degrees
+
+Optimizing the Curves:
+  At each control point, minimize energy
+    Energy is sum of smoothness and positional energy
+      some sort of math idk
+    Exclude "sharp features"
+  To minimize energy, try several random new offset positions within small radius and keep min
+  Minimize cell distortion using harmonic maps on nodes not constrained by the energy optimization
+
+Rendering:
+  Can be rendered using standard vector graphics techniques (???)
+  Can also use diffusion solvers (????)
+
+Postprocessing:
+  Output svg file
+  
+TODO:
+  Define Pixel data structure
+  Define good graph structure
+  cry
+  cry a lot
