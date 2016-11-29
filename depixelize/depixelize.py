@@ -6,11 +6,12 @@ import matplotlib.pyplot as plt
 Container class to hold pixel data.
 '''
 class Pixel:
-  def __init__(self, y, u, v, coord):
+  def __init__(self, y, u, v, coord, voronoiPts=[]):
     self.y = y
     self.u = u
     self.v = v
     self.coord = coord
+    self.voronoiPts = voronoiPts
 
 '''
 Main class for depixelizer functions.
@@ -91,10 +92,13 @@ class Depixelizer:
       for x in range(self.width):
         for j in range(y-1,y+2):
           for i in range(x-1,x+2):
-            if (i != x or j != y) and (i >= 0 and i < self.width) and (j >= 0 and j < self.height):
+            if (i != x or j != y) and self.inRange((i, j)):
               graph.add_edge((x,y),(i,j))
 
     return graph
+    
+  def inRange(self, coord):
+    return (coord[0] >= 0 and coord[0] < self.width) and (coord[1] >= 0 and coord[1] < self.height)
     
   '''
   Implements the "Reshaping the Pixel Cells" portion of the algorithm.
@@ -102,6 +106,7 @@ class Depixelizer:
   def reshapeGraph(self, graph):
     self.removeDissimilarEdges(graph)
     self.resolveDiagonalEdges(graph)
+    self.generateGeneralizedVoronoi(graph)
   
   '''
   Removes edges where the difference between pixels is large.
@@ -167,6 +172,9 @@ class Depixelizer:
   def nodesConnected(self, graph, u, v):
     return u in graph.neighbors(v)
     
+  '''
+  Helper function to return the weights of the diagonal edges in a 2x2 window.
+  '''
   def computeWeights(self, graph, coord):
     c1 = coord
     c2 = (coord[0]+1, coord[1])
@@ -245,6 +253,90 @@ class Depixelizer:
     if len(graph.neighbors(c1)) == 1 or len(graph.neighbors(c2)) == 1:
       return 5
     return 0
+    
+  '''
+  Generates a Voronoi diagram for each node and its half-edge.
+  '''
+  def generateGeneralizedVoronoi(self, graph):
+    self.computeVoronoi(graph)
+    
+  '''
+  For each pixel, examines the adjacent and corner nodes (eight total) and computes the Voronoi cell. The northwest is (0,0)
+  '''
+  def computeVoronoi(self, graph):
+    voronoi = nx.Graph()
+    
+    for y in range(self.height-1):
+      for x in range(self.width-1):     
+        pixel = self.pixelData[(x,y)]
+        self.findVoronoiPts(graph, pixel)
+        
+        
+  def findVoronoiPts(self, graph, pixel):
+    pixelNeighbors = graph.neighbors(pixel.coord)
+    
+    x, y = pixel.coord
+    center = (x + 0.5, y + 0.5)
+    
+    north = (x, y-1)
+    south = (x, y+1)
+    west = (x-1, y)
+    east = (x+1, y)
+    
+    if self.inRange(north):
+      if north not in pixelNeighbors:
+        pixel.voronoiPts.append((center[0], center[1] - 0.25))
+    else:
+      pixel.voronoiPts.append((center[0], center[1] - 0.5))
+      
+    if self.inRange(south):
+      if south not in pixelNeighbors:
+        pixel.voronoiPts.append((center[0], center[1] + 0.25))
+    else:
+      pixel.voronoiPts.append((center[0], center[1] + 0.5))
+      
+    if self.inRange(west):
+      if west not in pixelNeighbors:
+        pixel.voronoiPts.append((center[0] - 0.25, center[1]))
+    else:
+      pixel.voronoiPts.append((center[0] - 0.5, center[1]))
+      
+    if self.inRange(east):
+      if east not in pixelNeighbors:
+        pixel.voronoiPts.append((center[0] + 0.25, center[1]))
+    else:
+      pixel.voronoiPts.append((center[0] + 0.5, center[1]))
+      
+    nw = (x-1, y-1)
+    sw = (x-1, y+1)
+    ne = (x+1, y-1)
+    se = (x+1, y+1)
+    
+    self.findDiagonalVoronoiPts(graph, pixel, pixelNeighbors, center, nw, north, west)
+    self.findDiagonalVoronoiPts(graph, pixel, pixelNeighbors, center, sw, south, west)
+    self.findDiagonalVoronoiPts(graph, pixel, pixelNeighbors, center, ne, north, east)
+    self.findDiagonalVoronoiPts(graph, pixel, pixelNeighbors, center, se, south, east)
+          
+  def findDiagonalVoronoiPts(self, graph, pixel, pixelNeighbors, center, diagonal, vert, horiz):
+    horizSign = -1 if horiz[0] < pixel.coord[0] else 1
+    vertSign = -1 if vert[1] < pixel.coord[1] else 1
+    
+    horizNeighbor = self.inRange(horiz) and horiz in pixelNeighbors
+    vertNeighbor = self.inRange(vert) and vert in pixelNeighbors
+    
+    if self.inRange(diagonal):
+      if diagonal in pixelNeighbors:
+        pixel.voronoiPts.append((center[0] + (horizSign * 0.75), center[1] + (vertSign * 0.25)))
+        pixel.voronoiPts.append((center[0] + (horizSign * 0.25), center[1] + (vertSign * 0.75)))
+        if (horizNeighbor and not vertNeighbor) or (vertNeighbor and not horizNeighbor):
+          pixel.voronoiPts.append((center[0] + (horizSign * 0.5), center[1] + (vertSign * 0.5)))
+      else:
+        if horiz in graph.neighbors(vert):
+          pixel.voronoiPts.append((center[0] + (horizSign * 0.25), center[1] + (vertSign * 0.25)))
+        else:
+          pixel.voronoiPts.append((center[0] + (horizSign * 0.5), center[1] + (vertSign * 0.5)))
+    else:
+      pixel.voronoiPts.append((center[0] + (horizSign * 0.5), center[1] + (vertSign * 0.5)))
 
 '''
 Main method.
