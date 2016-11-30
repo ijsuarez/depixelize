@@ -104,7 +104,10 @@ class Depixelizer:
               graph.add_edge((x,y),(i,j))
 
     return graph
-    
+  
+  '''
+  Helper function to check if a given coordinate is within the proper width/height.
+  '''
   def inRange(self, coord):
     return (coord[0] >= 0 and coord[0] < self.width) and (coord[1] >= 0 and coord[1] < self.height)
     
@@ -263,7 +266,9 @@ class Depixelizer:
     return 0
     
   '''
-  For each pixel, examines the adjacent and corner nodes (eight total) and computes the Voronoi cell. Northwest is (0,0)
+  For each pixel, examines the adjacent and corner nodes (eight total) and computes the Voronoi cell. Northwest is (0,0).
+  The convex hull is computed using the pyhull library. It conveniently provides a decent estimate of the
+  Voronoi cell.
   '''
   def computeVoronoi(self, graph):
     voronoi = nx.Graph()
@@ -279,16 +284,27 @@ class Depixelizer:
 
     return voronoi
 
+  '''
+  Helper function to sort the convex hull points to be a circular array.
+  '''
   def angle(self, point, center):
     return math.atan2(point[1]- center[1], point[0] - center[0])
 
+  '''
+  For a given pixel, adds all the Voronoi points into the Voronoi graph.
+  '''
   def addVoronoiPts(self, voronoi, pixel):
     for point in pixel.voronoiPts:
       voronoi.add_node(point, pos=(point[0], self.height-point[1]))
     for i in range(len(pixel.voronoiPts)):
       voronoi.add_edge(pixel.voronoiPts[i], pixel.voronoiPts[(i-1)%len(pixel.voronoiPts)])
       voronoi.add_edge(pixel.voronoiPts[i], pixel.voronoiPts[(i+1)%len(pixel.voronoiPts)])
-        
+
+  '''
+  Takes advantage of the limited configurations of a 3x3 pixel window to estimate a generalized
+  Voronoi cell for a given pixel. The Voronoi vertices are fixed to a quarter pixel length
+  and are estimated based on the connections to a pixel's neighbor.
+  '''
   def findVoronoiPts(self, graph, pixel):
     pixelNeighbors = graph.neighbors(pixel.coord)
     
@@ -333,7 +349,10 @@ class Depixelizer:
     self.findDiagonalVoronoiPts(graph, pixel, pixelNeighbors, center, sw, south, west)
     self.findDiagonalVoronoiPts(graph, pixel, pixelNeighbors, center, ne, north, east)
     self.findDiagonalVoronoiPts(graph, pixel, pixelNeighbors, center, se, south, east)
-          
+
+  '''
+  Handles finding Voronoi cell vertices for the diagonal neighbors.
+  '''
   def findDiagonalVoronoiPts(self, graph, pixel, pixelNeighbors, center, diagonal, vert, horiz):
     horizSign = -1 if horiz[0] < center[0] else 1
     vertSign = -1 if vert[1] < center[1] else 1
