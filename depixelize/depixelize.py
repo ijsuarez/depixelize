@@ -1,17 +1,19 @@
-import sys, png
+import sys, math, png
 import networkx as nx
 import matplotlib.pyplot as plt
+
+from pyhull import qconvex
 
 '''
 Container class to hold pixel data.
 '''
 class Pixel:
-  def __init__(self, y, u, v, coord, voronoiPts=[]):
+  def __init__(self, y, u, v, coord):
     self.y = y
     self.u = u
     self.v = v
     self.coord = coord
-    self.voronoiPts = voronoiPts
+    self.voronoiPts = []
 
 '''
 Main class for depixelizer functions.
@@ -31,11 +33,15 @@ class Depixelizer:
   '''
   def depixelize(self, target):
     graph = self.initializeGraph(target)
-    self.reshapeGraph(graph)
+    voronoi = self.reshapeGraph(graph)
+
+    #pos = nx.get_node_attributes(graph, 'pos')
+    #nx.draw(graph, pos, node_size=5)
+    #plt.savefig('graph.png')
     
-    pos = nx.get_node_attributes(graph, 'pos')
-    nx.draw(graph, pos, node_size=5)
-    plt.savefig('debug.png')
+    pos = nx.get_node_attributes(voronoi, 'pos')
+    nx.draw(voronoi, pos, node_size=5)
+    plt.savefig('voronoi.png')
     
   '''
   Takes a PNG image and turns it into a graph with YUV data.
@@ -106,7 +112,7 @@ class Depixelizer:
   def reshapeGraph(self, graph):
     self.removeDissimilarEdges(graph)
     self.resolveDiagonalEdges(graph)
-    self.generateGeneralizedVoronoi(graph)
+    return self.computeVoronoi(graph)
   
   '''
   Removes edges where the difference between pixels is large.
@@ -255,22 +261,31 @@ class Depixelizer:
     return 0
     
   '''
-  Generates a Voronoi diagram for each node and its half-edge.
-  '''
-  def generateGeneralizedVoronoi(self, graph):
-    self.computeVoronoi(graph)
-    
-  '''
-  For each pixel, examines the adjacent and corner nodes (eight total) and computes the Voronoi cell. The northwest is (0,0)
+  For each pixel, examines the adjacent and corner nodes (eight total) and computes the Voronoi cell. Northwest is (0,0)
   '''
   def computeVoronoi(self, graph):
     voronoi = nx.Graph()
     
-    for y in range(self.height-1):
-      for x in range(self.width-1):     
+    for y in range(self.height):
+      for x in range(self.width):     
         pixel = self.pixelData[(x,y)]
         self.findVoronoiPts(graph, pixel)
-        
+        hull = [point.split() for point in qconvex('p', pixel.voronoiPts)[2:]]
+        hull = [(float(coord[0]),float(coord[1])) for coord in hull]
+        pixel.voronoiPts = sorted(hull, key=lambda p: (self.angle(p, (pixel.coord[0]+0.5, pixel.coord[1]+0.5))))
+        self.addVoronoiPts(voronoi, pixel)
+
+    return voronoi
+
+  def angle(self, point, center):
+    return math.atan2(point[1]- center[1], point[0] - center[0])
+
+  def addVoronoiPts(self, voronoi, pixel):
+    for point in pixel.voronoiPts:
+      voronoi.add_node(point, pos=(point[0], self.height-point[1]))
+    for i in range(len(pixel.voronoiPts)):
+      voronoi.add_edge(pixel.voronoiPts[i], pixel.voronoiPts[(i-1)%len(pixel.voronoiPts)])
+      voronoi.add_edge(pixel.voronoiPts[i], pixel.voronoiPts[(i+1)%len(pixel.voronoiPts)])
         
   def findVoronoiPts(self, graph, pixel):
     pixelNeighbors = graph.neighbors(pixel.coord)
@@ -318,8 +333,8 @@ class Depixelizer:
     self.findDiagonalVoronoiPts(graph, pixel, pixelNeighbors, center, se, south, east)
           
   def findDiagonalVoronoiPts(self, graph, pixel, pixelNeighbors, center, diagonal, vert, horiz):
-    horizSign = -1 if horiz[0] < pixel.coord[0] else 1
-    vertSign = -1 if vert[1] < pixel.coord[1] else 1
+    horizSign = -1 if horiz[0] < center[0] else 1
+    vertSign = -1 if vert[1] < center[1] else 1
     
     horizNeighbor = self.inRange(horiz) and horiz in pixelNeighbors
     vertNeighbor = self.inRange(vert) and vert in pixelNeighbors
