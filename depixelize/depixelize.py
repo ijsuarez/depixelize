@@ -35,9 +35,11 @@ class Depixelizer:
     graph = self.initializeGraph(target)
     voronoi = self.reshapeGraph(graph)
 
-    #pos = nx.get_node_attributes(graph, 'pos')
-    #nx.draw(graph, pos, node_size=5)
-    #plt.savefig('graph.png')
+    pos = nx.get_node_attributes(graph, 'pos')
+    nx.draw(graph, pos, node_size=5)
+    plt.savefig('graph.png')
+
+    plt.clf()
     
     pos = nx.get_node_attributes(voronoi, 'pos')
     nx.draw(voronoi, pos, node_size=5)
