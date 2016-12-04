@@ -47,6 +47,7 @@ class Depixelizer:
     graph = self.initializeGraph(target)
     voronoi = self.reshapeGraph(graph)
     visibleEdges = self.generateVisibleEdges(voronoi)
+    self.resolveTJunctions(visibleEdges)
     
     edgeGraph = nx.Graph()
     for edge in visibleEdges:
@@ -474,6 +475,79 @@ class Depixelizer:
     else:
       print len(intersect)
 
+  def resolveTJunctions(self, visibleEdges):
+    for point in self.VEmap:
+      if len(self.VEmap[point]) == 3:
+        ve0, ve1, ve2 = self.VEmap[point]
+        neighbor0 = ve0[1] if ve0[0] == point else ve0[-2]
+        neighbor1 = ve1[1] if ve1[0] == point else ve1[-2]
+        neighbor2 = ve2[1] if ve2[0] == point else ve2[-2]
+        e0, e1, e2 = map(lambda x: self.isContourEdge(point, x), [neighbor0, neighbor1, neighbor2])
+
+        if e0 and e1 and not e2:
+          self.mergeEdges(visibleEdges, point, ve0, ve1)
+        elif e1 and e2 and not e0:
+          self.mergeEdges(visibleEdges, point, ve1, ve2)
+        elif e2 and e0 and not e1:
+          self.mergeEdges(visibleEdges, point, ve2, ve0)
+        else:
+          a0 = self.threePointAngle(point, neighbor0, neighbor1)
+          a1 = self.threePointAngle(point, neighbor1, neighbor2)
+          a2 = self.threePointAngle(point, neighbor2, neighbor0)
+          
+          if a0 > a1 and a0 > a2:
+            self.mergeEdges(visibleEdges, point, ve0, ve1)
+          elif a1 > a0 and a1 > a2:
+            self.mergeEdges(visibleEdges, point, ve1, ve2)
+          elif a2 > a0 and a2 > a1:
+            self.mergeEdges(visibleEdges, point, ve2, ve0)
+
+  def threePointAngle(self, p0, p1, p2):
+    p01 = (p0[0] - p1[0])**2 + (p0[1] - p1[1])**2
+    p02 = (p0[0] - p2[0])**2 + (p0[1] - p2[1])**2
+    p12 = (p1[0] - p2[0])**2 + (p1[1] - p2[1])**2
+    return math.degrees(math.acos((p01 + p02 -p12) / (2 * math.sqrt(p01 * p02))))
+
+  def mergeEdges(self, visibleEdges, point, v1, v2):
+    edge1, edge2 = v1.pts, v2.pts
+    if edge1[0] != point: edge1.reverse()
+    if edge2[0] != point: edge2.reverse()
+    cycle1 = edge1[0] == edge1[-1]
+    cycle2 = edge2[0] == edge2[-1]
+
+    if cycle1 and cycle2:
+      edge = edge1[:-1] + edge2
+    elif cycle1 and not cycle2:
+      edge = list(reversed(edge2))[:-1] + edge1
+    else:
+      edge = list(reversed(edge1))[:-1] + edge2
+
+    mergeEdge = VisibleEdge(edge)
+
+    visibleEdges.remove(v1)
+    visibleEdges.remove(v2)
+
+    for point in mergeEdge.pts:
+      if v1 in self.VEmap[point]:
+        self.VEmap[point].remove(v1)
+      if v2 in self.VEmap[point]:
+        self.VEmap[point].remove(v2)
+      self.VEmap[point].add(mergeEdge)
+
+    visibleEdges.add(mergeEdge)
+
+  def isContourEdge(self, node1, node2):
+    intersect = self.pixelMapping[node1] & self.pixelMapping[node2]
+    if len(intersect) == 1:
+      return True
+    else:
+      pixel1, pixel2 = intersect
+      return not self.isShadingEdge(pixel1, pixel2)
+
+  def isShadingEdge(self, pixel1, pixel2):
+    dist = (pixel1.y - pixel2.y)**2 + (pixel1.u - pixel2.u)**2 + (pixel1.v - pixel2.v)**2
+    return dist <= (float(100/255)**2)
+
   def computeSplines(self, visibleEdges):
     for edge in visibleEdges:
       spline = bspline.bspline(edge.pts, 3)
@@ -484,12 +558,12 @@ class Depixelizer:
     for edge in visibleEdges:
       path.append('M')
       path.append(self.scale(edge[0]))
-      for i in range(len(edge.pts)-1):
-        path.append('L')
+      for i in range(1, len(edge.pts)-1):
+        path.append('Q')
         path.append(self.scale(edge[i]))
-        #path.append(self.scale(edge[i+1]))
-      path.append('Z')
-    drawing.add(drawing.path(path))
+        path.append(self.scale(edge[i+1]))
+      #path.append('Z')
+    drawing.add(drawing.path(path, stroke=svgwrite.rgb(0,0,0), fill=svgwrite.rgb(255,255,255)))
     drawing.save()
 
   def scale(self, point):
