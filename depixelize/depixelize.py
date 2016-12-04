@@ -1,6 +1,8 @@
 import sys, math, png
 import networkx as nx
 import matplotlib.pyplot as plt
+import svgwrite
+import bspline
 
 from pyhull import qconvex
 
@@ -15,6 +17,14 @@ class Pixel:
     self.coord = coord
     self.voronoiPts = []
 
+class VisibleEdge:
+  def __init__(self, pts):
+    self.pts = pts
+    self.bspline = None
+
+  def __getitem__(self, key):
+    return self.pts[key]
+
 '''
 Main class for depixelizer functions.
 '''
@@ -25,6 +35,8 @@ class Depixelizer:
   '''
   def __init__(self):
     self.pixelData = {}
+    self.pixelMapping = {}
+    self.VEmap = {}
     self.width = 0
     self.height = 0
     
@@ -34,6 +46,17 @@ class Depixelizer:
   def depixelize(self, target):
     graph = self.initializeGraph(target)
     voronoi = self.reshapeGraph(graph)
+    visibleEdges = self.generateVisibleEdges(voronoi)
+    
+    edgeGraph = nx.Graph()
+    for edge in visibleEdges:
+      for i in range(len(edge.pts)-1):
+        edgeGraph.add_node(edge[i], pos=(edge[i][0], self.height-edge[i][1]))
+        edgeGraph.add_edge(edge[i], edge[i+1])
+      edgeGraph.add_node(edge[-1], pos=(edge[-1][0], self.height-edge[-1][1]))
+
+    #self.computeSplines(visibleEdges)
+    self.render(visibleEdges)
 
     pos = nx.get_node_attributes(graph, 'pos')
     nx.draw(graph, pos, node_size=5)
@@ -44,6 +67,12 @@ class Depixelizer:
     pos = nx.get_node_attributes(voronoi, 'pos')
     nx.draw(voronoi, pos, node_size=5)
     plt.savefig('voronoi.png')
+
+    plt.clf()
+
+    pos = nx.get_node_attributes(edgeGraph, 'pos')
+    nx.draw(edgeGraph, pos, node_size=5)
+    plt.savefig('visible.png')
     
   '''
   Takes a PNG image and turns it into a graph with YUV data.
@@ -128,9 +157,12 @@ class Depixelizer:
       neighbors = graph.neighbors(node)
       for neighbor in neighbors:
         neighborData = self.pixelData[neighbor]
-        if (abs(nodeData.y - neighborData.y) > 48/255 or abs(nodeData.u - neighborData.u) > 7/255 or
-            abs(nodeData.v - neighborData.v) > 6/255):
+        if self.pixelIsDissimilar(nodeData, neighborData):
           graph.remove_edge(node, neighbor)
+
+  def pixelIsDissimilar(self, nodeData, neighborData):
+    return (abs(nodeData.y - neighborData.y) > 48/255 or abs(nodeData.u - neighborData.u) > 7/255 or
+            abs(nodeData.v - neighborData.v) > 6/255)
           
   '''
   Uses a sliding 2x2 window to examine pixel blocks and remove the necessary diagonals.
@@ -295,6 +327,9 @@ class Depixelizer:
   '''
   def addVoronoiPts(self, voronoi, pixel):
     for point in pixel.voronoiPts:
+      if point not in self.pixelMapping:
+        self.pixelMapping[point] = set()
+      self.pixelMapping[point].add(pixel)
       voronoi.add_node(point, pos=(point[0], self.height-point[1]))
     for i in range(len(pixel.voronoiPts)):
       voronoi.add_edge(pixel.voronoiPts[i], pixel.voronoiPts[(i-1)%len(pixel.voronoiPts)])
@@ -373,6 +408,92 @@ class Depixelizer:
           pixel.voronoiPts.append((center[0] + (horizSign * 0.5), center[1] + (vertSign * 0.5)))
     else:
       pixel.voronoiPts.append((center[0] + (horizSign * 0.5), center[1] + (vertSign * 0.5)))
+
+  def generateVisibleEdges(self, voronoi):
+    result = set()
+    for node in voronoi.nodes():
+      if node not in self.VEmap:
+        self.VEmap[node] = set()
+      neighbors = filter(lambda x: self.dissimilarPolygons(x, node), voronoi.neighbors(node))
+      for visibleEdge in self.VEmap[node]:
+        neighbors = filter(lambda x: x not in visibleEdge.pts, neighbors)
+      visibleEdges = [self.computeVisibleEdge(voronoi, node, neighbor) for neighbor in neighbors]
+
+      to_remove = set()
+      for i in range(len(visibleEdges)):
+        for j in range(len(visibleEdges)):
+          if i != j:
+            ve1, ve2 = visibleEdges[i], visibleEdges[j]
+            ve1 = ve1[:-1] if ve1[0] == ve1[-1] else ve1
+            ve2 = ve2[:-1] if ve2[0] == ve2[-1] else ve2
+            if ve1 == list(reversed(ve2)):
+              to_remove.add(i)
+      visibleEdges = [edge for i,edge in enumerate(visibleEdges) if i not in to_remove]
+
+      if len(visibleEdges) == 2 and len(self.VEmap[node]) == 0:
+        ve1, ve2 = visibleEdges[0], visibleEdges[1]
+        hasCycle = ve1[0] == ve1[-1] and ve2[0] == ve2[-1]
+
+        if not hasCycle:
+          visibleEdges = [list(reversed(ve1))[:-1] + ve2]
+
+      for edge in visibleEdges:
+        visibleEdge = VisibleEdge(edge)
+        result.add(visibleEdge)
+        for point in edge:
+          if point not in self.VEmap:
+            self.VEmap[point] = set()
+          self.VEmap[point].add(visibleEdge)
+
+    return result
+
+  def computeVisibleEdge(self, voronoi, node, neighbor):
+    visited = set()
+    visited.add(node)
+    stack = [neighbor]
+    result = [node]
+    while len(stack) != 0:
+      current = stack.pop()
+      result.append(current)
+      visited.add(current)
+
+      neighbors = filter(lambda x: self.dissimilarPolygons(x, current), voronoi.neighbors(current))
+      if len(neighbors) == 2:
+        for neighbor in neighbors:
+          if neighbor not in visited:
+            stack.append(neighbor)
+    return result
+
+  def dissimilarPolygons(self, node1, node2):
+    intersect = self.pixelMapping[node1] & self.pixelMapping[node2]
+    if len(intersect) == 1:
+      return True
+    elif len(intersect) == 2:
+      pixel1, pixel2 = intersect
+      return self.pixelIsDissimilar(pixel1, pixel2)
+    else:
+      print len(intersect)
+
+  def computeSplines(self, visibleEdges):
+    for edge in visibleEdges:
+      spline = bspline.bspline(edge.pts, 3)
+
+  def render(self, visibleEdges):
+    drawing = svgwrite.Drawing('output.svg')
+    path = []
+    for edge in visibleEdges:
+      path.append('M')
+      path.append(self.scale(edge[0]))
+      for i in range(len(edge.pts)-1):
+        path.append('L')
+        path.append(self.scale(edge[i]))
+        #path.append(self.scale(edge[i+1]))
+      path.append('Z')
+    drawing.add(drawing.path(path))
+    drawing.save()
+
+  def scale(self, point):
+    return (int(point[0] * 100), int(point[1] * 100))
 
 '''
 Main method.
