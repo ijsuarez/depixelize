@@ -10,12 +10,18 @@ from pyhull import qconvex
 Container class to hold pixel data.
 '''
 class Pixel:
-  def __init__(self, y, u, v, coord):
+  def __init__(self, r, g, b, y, u, v, coord):
+    self.r = r
+    self.g = g
+    self.b = b
     self.y = y
     self.u = u
     self.v = v
     self.coord = coord
     self.voronoiPts = []
+
+  def rgbData(self):
+    return (self.r, self.g, self.b)
 
 class VisibleEdge:
   def __init__(self, pts):
@@ -80,8 +86,8 @@ class Depixelizer:
   '''
   def initializeGraph(self, target):
     rgbData = self.readPNG(target)
-    yuvData = self.convertRGBtoYUV(rgbData)
-    graphData = self.convertYUVtoGraph(yuvData)
+    rgbData, yuvData = self.convertRGBtoYUV(rgbData)
+    graphData = self.convertToGraph(rgbData, yuvData)
     
     return graphData
     
@@ -102,29 +108,36 @@ class Depixelizer:
   '''
   def convertRGBtoYUV(self, rgbData):
     # assuming 4 bands of data, RGBA, ignore alpha channel
+    rgbDataCopy = []
     yuvData = []
     for row in rgbData[2]:
+      rgbRow = []
       yuvRow = []
       for i in range(0, len(row), 4):
+        rgbRow.append(row[i])
+        rgbRow.append(row[i+1])
+        rgbRow.append(row[i+2])
         yuvRow.append((0.257 * row[i]) + (0.504 * row[i+1]) + (0.098 * row[i+2]) + 16)   # y-value
         yuvRow.append(-(0.148 * row[i]) - (0.291 * row[i+1]) + (0.439 * row[i+2]) + 128) # u-value
         yuvRow.append((0.439 * row[i]) - (0.368 * row[i+1]) - (0.071 * row[i+2]) + 128)  # v-value
+      rgbDataCopy.append(rgbRow)
       yuvData.append(yuvRow)
-    return yuvData
+    return rgbDataCopy, yuvData
     
   '''
   Creates a dictionary of pixel coordinate to YUV data and uses the coordinates as keys for a networkx graph.
   Creates edges for all adjacent nodes.
   '''
-  def convertYUVtoGraph(self, yuvData):
+  def convertToGraph(self, rgbData, yuvData):
     graph = nx.Graph()
     
-    for row in range(len(yuvData)):
-      for col in range(0, len(yuvData[row]), 3):
+    for row in range(self.height):
+      for col in range(self.width):
         # make coordinates follow (x, y) format
-        pixel = Pixel(yuvData[row][col], yuvData[row][col+1], yuvData[row][col+2], (col/3, row))
-        self.pixelData[(col/3, row)] = pixel
-        graph.add_node((col/3, row), pos=(col/3, self.height-row))
+        pixel = Pixel(rgbData[row][(col*3)], rgbData[row][(col*3)+1], rgbData[row][(col*3)+2],
+                      yuvData[row][(col*3)], yuvData[row][(col*3)+1], yuvData[row][(col*3)+2], (col, row))
+        self.pixelData[(col, row)] = pixel
+        graph.add_node((col, row), pos=(col, self.height-row))
     
     for y in range(self.height):
       for x in range(self.width):
@@ -558,10 +571,12 @@ class Depixelizer:
     for edge in visibleEdges:
       path.append('M')
       path.append(self.scale(edge[0]))
+      color = set([p.rgbData() for p in self.pixelMapping[edge[0]]])
       for i in range(1, len(edge.pts)-1):
         path.append('Q')
         path.append(self.scale(edge[i]))
         path.append(self.scale(edge[i+1]))
+        color &= set([p.rgbData() for p in self.pixelMapping[edge[i]]]) & set([p.rgbData() for p in self.pixelMapping[edge[i+1]]])
       #path.append('Z')
     drawing.add(drawing.path(path, stroke=svgwrite.rgb(0,0,0), fill=svgwrite.rgb(255,255,255)))
     drawing.save()
