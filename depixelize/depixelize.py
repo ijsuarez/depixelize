@@ -56,11 +56,19 @@ class Depixelizer:
     self.resolveTJunctions(visibleEdges)
     
     edgeGraph = nx.Graph()
+    edgeNum = 0
+    edgeColors = ['r', 'g', 'b']
     for edge in visibleEdges:
       for i in range(len(edge.pts)-1):
         edgeGraph.add_node(edge[i], pos=(edge[i][0], self.height-edge[i][1]))
-        edgeGraph.add_edge(edge[i], edge[i+1])
+        edgeGraph.add_edge(edge[i], edge[i+1], color=edgeColors[edgeNum % 3])
       edgeGraph.add_node(edge[-1], pos=(edge[-1][0], self.height-edge[-1][1]))
+      #pos = nx.get_node_attributes(edgeGraph, 'pos')
+      #nx.draw(edgeGraph, pos, node_size=5)
+      #plt.savefig('visible%d.png'%edgeNum)
+      #plt.clf()
+      #edgeGraph.clear()
+      edgeNum+=1
 
     #self.computeSplines(visibleEdges)
     self.render(visibleEdges)
@@ -78,7 +86,9 @@ class Depixelizer:
     plt.clf()
 
     pos = nx.get_node_attributes(edgeGraph, 'pos')
-    nx.draw(edgeGraph, pos, node_size=5)
+    edges = edgeGraph.edges()
+    colors = [edgeGraph[u][v]['color'] for u,v in edges]
+    nx.draw(edgeGraph, pos, node_size=5, edges=edges, edge_color=colors)
     plt.savefig('visible.png')
     
   '''
@@ -433,7 +443,7 @@ class Depixelizer:
         neighbors = filter(lambda x: x not in visibleEdge.pts, neighbors)
       visibleEdges = [self.computeVisibleEdge(voronoi, node, neighbor) for neighbor in neighbors]
 
-      to_remove = set()
+      toRemove = set()
       for i in range(len(visibleEdges)):
         for j in range(len(visibleEdges)):
           if i != j:
@@ -441,12 +451,12 @@ class Depixelizer:
             ve1 = ve1[:-1] if ve1[0] == ve1[-1] else ve1
             ve2 = ve2[:-1] if ve2[0] == ve2[-1] else ve2
             if ve1 == list(reversed(ve2)):
-              to_remove.add(i)
-      visibleEdges = [edge for i,edge in enumerate(visibleEdges) if i not in to_remove]
+              toRemove.add(i)
+      visibleEdges = [edge for i,edge in enumerate(visibleEdges) if i not in toRemove]
 
       if len(visibleEdges) == 2 and len(self.VEmap[node]) == 0:
         ve1, ve2 = visibleEdges[0], visibleEdges[1]
-        hasCycle = ve1[0] == ve1[-1] and ve2[0] == ve2[-1]
+        hasCycle = ve1[0] == ve1[-1] or ve2[0] == ve2[-1]
 
         if not hasCycle:
           visibleEdges = [list(reversed(ve1))[:-1] + ve2]
@@ -490,7 +500,10 @@ class Depixelizer:
 
   def resolveTJunctions(self, visibleEdges):
     for point in self.VEmap:
-      if len(self.VEmap[point]) == 3:
+      if len(self.VEmap[point]) == 2:
+        ve0, ve1 = self.VEmap[point]
+        self.mergeEdges(visibleEdges, point, ve0, ve1)
+      elif len(self.VEmap[point]) == 3:
         ve0, ve1, ve2 = self.VEmap[point]
         neighbor0 = ve0[1] if ve0[0] == point else ve0[-2]
         neighbor1 = ve1[1] if ve1[0] == point else ve1[-2]
@@ -565,21 +578,62 @@ class Depixelizer:
     for edge in visibleEdges:
       spline = bspline.bspline(edge.pts, 3)
 
+  def relaxVisibleEdge(self, visibleEdge):
+    toRemove = set()
+    if visibleEdge[0] == visibleEdge[-1]:
+      for i in range(len(visibleEdge.pts)):
+        prev = visibleEdge[i-1 % len(visibleEdge)]
+        curr = visibleEdge[i]
+        nxt = visibleEdge[i+1 % len(visibleEdge)]
+        if self.collinear(prev, curr, nxt):
+          toRemove.add(curr)
+    else:
+      for i in range(1, len(visibleEdge.pts)-1):
+        prev = visibleEdge[i-1]
+        curr = visibleEdge[i]
+        nxt = visibleEdge[i+1]
+        if self.collinear(prev, curr, nxt):
+          toRemove.add(curr)
+    return filter(lambda x: x not in toRemove, visibleEdge.pts)
+      
+  def collinear(self, p0, p1, p2):
+    x1, y1 = p1[0] - p0[0], p1[1] - p0[1]
+    x2, y2 = p2[0] - p0[0], p2[1] - p0[1]
+    return abs(x1 * y2 - x2 * y1) < 1e-12
+
   def render(self, visibleEdges):
     drawing = svgwrite.Drawing('output.svg')
+    drawing.add(drawing.rect(insert=(0, 0), size=('100%', '100%'), rx=None, ry=None, fill='rgb(255,255,255)'))
     path = []
-    for edge in visibleEdges:
-      path.append('M')
-      path.append(self.scale(edge[0]))
+    for visibleEdge in visibleEdges:
+      edge = self.relaxVisibleEdge(visibleEdge)
+      self.debugGraph(edge)
+      #path.append('M')
+      #path.append(self.scale(edge[0]))
       color = set([p.rgbData() for p in self.pixelMapping[edge[0]]])
-      for i in range(1, len(edge.pts)-1):
-        path.append('Q')
+      for i in range(0, len(edge)-3):
+        path.append('M')
         path.append(self.scale(edge[i]))
+        path.append('Q')
         path.append(self.scale(edge[i+1]))
-        color &= set([p.rgbData() for p in self.pixelMapping[edge[i]]]) & set([p.rgbData() for p in self.pixelMapping[edge[i+1]]])
+        path.append(self.scale(edge[i+2]))
+        #color &= set([p.rgbData() for p in self.pixelMapping[edge[i]]]) & set([p.rgbData() for p in self.pixelMapping[edge[i+1]]])
       #path.append('Z')
-    drawing.add(drawing.path(path, stroke=svgwrite.rgb(0,0,0), fill=svgwrite.rgb(255,255,255)))
+    drawing.add(drawing.path(path, stroke=svgwrite.rgb(0,0,0), fill='none'))
     drawing.save()
+    plt.clf()
+
+  def debugGraph(self, edge):
+    edgeGraph = nx.Graph()
+    for i in range(len(edge)-1):
+      edgeGraph.add_node(edge[i], pos=(edge[i][0], self.height-edge[i][1]))
+      edgeGraph.add_edge(edge[i], edge[i+1])
+    edgeGraph.add_node(edge[-1], pos=(edge[-1][0], self.height-edge[-1][1]))
+
+    #plt.clf()
+    pos = nx.get_node_attributes(edgeGraph, 'pos')
+    nx.draw(edgeGraph, pos, node_size=5)
+    plt.savefig('edge.png')
 
   def scale(self, point):
     return (int(point[0] * 100), int(point[1] * 100))
