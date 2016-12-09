@@ -755,8 +755,8 @@ class Depixelizer:
         if edge[i] == edge[0]:
           edge = edge[:i+1]
           break
-      if (0,0) in edge: # hack to skip the border edges
-        continue
+      #if (0,0) in edge: # hack to skip the border edges
+      #  continue
       path = []
       edge = self.relaxVisibleEdge(edge)
       if self.args.debug:
@@ -783,8 +783,8 @@ class Depixelizer:
         if edge[i] == edge[0]:
           edge = edge[:i+1]
           break
-      if (0,0) in edge: # hack to skip the border edges
-        continue
+      #if (0,0) in edge: # hack to skip the border edges
+      #  continue
       path = []
       self.initializeControlPoints(edge)
       edge = self.relaxVisibleEdge(edge)
